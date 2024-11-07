@@ -33,7 +33,7 @@ stages:
         addToPath: true
 
     - script: |
-        pip install google-play-scraper app-store-scraper
+        pip install requests beautifulsoup4 google-play-scraper app-store-scraper
       displayName: 'Install dependencies'
 
     - task: PythonScript@0
@@ -41,47 +41,82 @@ stages:
       inputs:
         scriptSource: 'inline'
         script: |
+          import requests
+          from bs4 import BeautifulSoup
           from google_play_scraper import search as google_search
           from app_store_scraper import AppStore
-          import sys
 
-          def check_google_play(app_name):
-              try:
-                  results = google_search(app_name, lang='en', country='us')
-                  if results:
-                      app = results[0]
-                      print(f"Google Play: App '{app_name}' is available.")
-                      print(f"App ID: {app['appId']}")
-                      print(f"Version: {app['version']}")
-                      return True
-                  else:
-                      print(f"Google Play: App '{app_name}' is not available.")
-                      return False
-              except Exception as e:
-                  print(f"Google Play: Error checking app '{app_name}'. Error: {str(e)}")
-                  return False
+          def validate_google_play_app(app_name):
+              base_url = "https://play.google.com/store/apps/details"
+              search_url = "https://play.google.com/store/search"
+              
+              # Step 1: Check if the app exists in search results
+              search_params = {
+                  'q': app_name,
+                  'c': 'apps'
+              }
+              search_response = requests.get(search_url, params=search_params)
+              search_soup = BeautifulSoup(search_response.text, 'html.parser')
+              
+              if app_name not in search_response.text:
+                  return False, "App not found in search results"
+              
+              # Step 2: Find the app ID from search results
+              app_id = None
+              for link in search_soup.find_all('a'):
+                  href = link.get('href')
+                  if href and 'details?id=' in href:
+                      app_id = href.split('details?id=')[1].split('&')[0]
+                      break
+              
+              if not app_id:
+                  return False, "Could not find app ID in search results"
+              
+              # Step 3: Check the app's details page
+              params = {
+                  'id': app_id
+              }
+              headers = {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
+              }
+              
+              response = requests.get(base_url, params=params, headers=headers, allow_redirects=True)
+              
+              if response.status_code != 200:
+                  return False, f"Failed to access app page. Status code: {response.status_code}"
+              
+              soup = BeautifulSoup(response.text, 'html.parser')
+              
+              # Check for elements that indicate the app page is valid
+              app_title = soup.find('h1', itemprop='name')
+              if not app_title:
+                  return False, "App title not found on page"
+              
+              install_button = soup.find('button', {'data-id': 'install-button'})
+              if not install_button:
+                  return False, "Install button not found on page"
+              
+              return True, f"App is available. ID: {app_id}"
 
           def check_app_store(app_name, country='us'):
               try:
                   app = AppStore(country=country, app_name=app_name)
                   app.review()
                   if app.app_id:
-                      print(f"App Store: App '{app_name}' is available.")
-                      print(f"App ID: {app.app_id}")
-                      print(f"Version: {app.version}")
-                      return True
+                      return True, f"App Store: App '{app_name}' is available. ID: {app.app_id}, Version: {app.version}"
                   else:
-                      print(f"App Store: App '{app_name}' is not available.")
-                      return False
+                      return False, f"App Store: App '{app_name}' is not available."
               except Exception as e:
-                  print(f"App Store: Error checking app '{app_name}'. Error: {str(e)}")
-                  return False
+                  return False, f"App Store: Error checking app '{app_name}'. Error: {str(e)}"
 
           google_app_name = '$(googleAppName)'
           apple_app_name = '$(appleAppName)'
 
-          google_result = check_google_play(google_app_name)
-          apple_result = check_app_store(apple_app_name)
+          google_result, google_message = validate_google_play_app(google_app_name)
+          apple_result, apple_message = check_app_store(apple_app_name)
+
+          print(f"Google Play: {google_message}")
+          print(f"App Store: {apple_message}")
 
           if not (google_result and apple_result):
               print("##vso[task.setvariable variable=appsUnavailable;isOutput=true]true")
