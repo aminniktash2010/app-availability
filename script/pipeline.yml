@@ -1,0 +1,42 @@
+trigger: none
+
+schedules:
+- cron: "0 2 * * *"
+  displayName: 'Daily 2 AM EST Check'
+  branches:
+    include:
+    - main
+  always: true
+
+parameters:
+- name: appIds
+  type: object
+  default:
+  - com.whatsapp
+  - com.instagram.android
+  - com.facebook.katana
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+- task: UsePythonVersion@0
+  inputs:
+    versionSpec: '3.x'
+    addToPath: true
+
+- script: |
+    python -m pip install --upgrade pip
+    pip install requests beautifulsoup4
+  displayName: 'Install dependencies'
+
+- ${{ each appId in parameters.appIds }}:
+  - script: |
+      python app-av.py --app-id ${{ appId }}
+    displayName: 'Check availability for ${{ appId }}'
+
+- task: PublishPipelineArtifact@1
+  inputs:
+    targetPath: '$(System.DefaultWorkingDirectory)/results'
+    artifact: 'AppAvailabilityResults'
+    publishLocation: 'pipeline'
