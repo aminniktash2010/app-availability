@@ -1,0 +1,102 @@
+trigger: none # Disable CI trigger
+
+schedules:
+- cron: "0 7 * * *" # 2 AM EST is 7 AM UTC
+  displayName: Daily 2 AM EST run
+  branches:
+    include:
+    - main
+  always: true
+
+parameters:
+- name: googleAppName
+  type: string
+  default: 'Your Google App Name'
+- name: appleAppName
+  type: string
+  default: 'Your Apple App Name'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+- task: UsePythonVersion@0
+  inputs:
+    versionSpec: '3.x'
+    addToPath: true
+
+- script: |
+    pip install google-play-scraper app-store-scraper
+  displayName: 'Install dependencies'
+
+- task: PythonScript@0
+  name: CheckAppAvailability
+  inputs:
+    scriptSource: 'inline'
+    script: |
+      from google_play_scraper import search as google_search
+      from app_store_scraper import AppStore
+      import sys
+
+      def check_google_play(app_name):
+          try:
+              results = google_search(app_name, lang='en', country='us')
+              if results:
+                  app = results[0]
+                  print(f"Google Play: App '{app_name}' is available.")
+                  print(f"App ID: {app['appId']}")
+                  print(f"Version: {app['version']}")
+                  return True
+              else:
+                  print(f"Google Play: App '{app_name}' is not available.")
+                  return False
+          except Exception as e:
+              print(f"Google Play: Error checking app '{app_name}'. Error: {str(e)}")
+              return False
+
+      def check_app_store(app_name, country='us'):
+          try:
+              app = AppStore(country=country, app_name=app_name)
+              app.review()
+              if app.app_id:
+                  print(f"App Store: App '{app_name}' is available.")
+                  print(f"App ID: {app.app_id}")
+                  print(f"Version: {app.version}")
+                  return True
+              else:
+                  print(f"App Store: App '{app_name}' is not available.")
+                  return False
+          except Exception as e:
+              print(f"App Store: Error checking app '{app_name}'. Error: {str(e)}")
+              return False
+
+      google_app_name = '$(googleAppName)'
+      apple_app_name = '$(appleAppName)'
+
+      google_result = check_google_play(google_app_name)
+      apple_result = check_app_store(apple_app_name)
+
+      if not (google_result and apple_result):
+          print("##vso[task.setvariable variable=AppsUnavailable;isOutput=true]true")
+          print("##vso[task.complete result=Failed;]One or both apps are not available.")
+      else:
+          print("Both apps are available.")
+          print("##vso[task.setvariable variable=AppsUnavailable;isOutput=true]false")
+
+  displayName: 'Check app availability and version'
+
+- task: ManualValidation@0
+  condition: eq(variables['CheckAppAvailability.AppsUnavailable'], 'true')
+  timeoutInMinutes: 1440 # 24 hours
+  inputs:
+    notifyUsers: |
+      user1@example.com
+      user2@example.com
+    instructions: |
+      One or both of the following apps are not available:
+      Google Play: $(googleAppName)
+      App Store: $(appleAppName)
+      
+      Please check the pipeline logs for more details and take necessary actions.
+    onTimeout: 'resume'
+  displayName: 'Manual Validation for App Unavailability'
