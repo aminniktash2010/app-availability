@@ -20,6 +20,8 @@ variables:
   - name: appsUnavailable
     value: false
 
+name: $(Date:yyyyMMdd)$(Rev:.r)
+
 stages:
 - stage: CheckAppAvailability
   jobs:
@@ -50,18 +52,13 @@ stages:
               base_url = "https://play.google.com/store/apps/details"
               search_url = "https://play.google.com/store/search"
               
-              # Step 1: Check if the app exists in search results
-              search_params = {
-                  'q': app_name,
-                  'c': 'apps'
-              }
+              search_params = {'q': app_name, 'c': 'apps'}
               search_response = requests.get(search_url, params=search_params)
               search_soup = BeautifulSoup(search_response.text, 'html.parser')
               
               if app_name not in search_response.text:
                   return False, "App not found in search results"
               
-              # Step 2: Find the app ID from search results
               app_id = None
               for link in search_soup.find_all('a'):
                   href = link.get('href')
@@ -72,13 +69,8 @@ stages:
               if not app_id:
                   return False, "Could not find app ID in search results"
               
-              # Step 3: Check the app's details page
-              params = {
-                  'id': app_id
-              }
-              headers = {
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
-              }
+              params = {'id': app_id}
+              headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
               
               response = requests.get(base_url, params=params, headers=headers, allow_redirects=True)
               
@@ -87,7 +79,6 @@ stages:
               
               soup = BeautifulSoup(response.text, 'html.parser')
               
-              # Check for elements that indicate the app page is valid
               app_title = soup.find('h1', itemprop='name')
               if not app_title:
                   return False, "App title not found on page"
@@ -102,10 +93,17 @@ stages:
               try:
                   app = AppStore(country=country, app_name=app_name)
                   app.review()
-                  if app.app_id:
-                      return True, f"App Store: App '{app_name}' is available. ID: {app.app_id}, Version: {app.version}"
-                  else:
-                      return False, f"App Store: App '{app_name}' is not available."
+                  
+                  if not hasattr(app, 'app_id') or app.app_id is None:
+                      return False, f"App Store: App '{app_name}' not found or no app_id available."
+                  
+                  if not hasattr(app, 'title') or app.title is None:
+                      return False, f"App Store: App '{app_name}' found, but no title available. ID: {app.app_id}"
+                  
+                  version = app.version if hasattr(app, 'version') else "Unknown"
+                  return True, f"App Store: App '{app_name}' is available. ID: {app.app_id}, Title: {app.title}, Version: {version}"
+              except AttributeError as e:
+                  return False, f"App Store: Error checking app '{app_name}'. AttributeError: {str(e)}"
               except Exception as e:
                   return False, f"App Store: Error checking app '{app_name}'. Error: {str(e)}"
 
@@ -120,6 +118,10 @@ stages:
 
           if not (google_result and apple_result):
               print("##vso[task.setvariable variable=appsUnavailable;isOutput=true]true")
+              if not google_result:
+                  print(f"##vso[task.logissue type=error]Google Play app unavailable: {google_message}")
+              if not apple_result:
+                  print(f"##vso[task.logissue type=error]Apple App Store app unavailable: {apple_message}")
               print("##vso[task.complete result=Failed;]One or both apps are not available.")
           else:
               print("Both apps are available.")
